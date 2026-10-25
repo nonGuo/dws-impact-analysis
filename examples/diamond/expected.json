@@ -1,0 +1,246 @@
+{
+  "description": "菱形收敛（多链路）样例期望结果：A=sdi.t_order，B=dws.t_order_base（A→B）、C=dws.t_order_std（A→C）、D=dws.t_order_enrich（A→C→D）、W=dws.t_order_wide（同时读 B 与 D，两条链路 A→B→W 与 A→C→D→W）。变更：A.cust_code，order_id=1 从 'CH001' 变为 'CH002'（1 条明细）。",
+  "sourceOfTruth": "python sqlite3 独立验证（examples/diamond/tools/verify_diamond.py，实际执行记录见 verify_note.md）：基线/双补丁两次快照 + 只打单补丁反例。",
+  "engineMode": "routed",
+  "dbMode": "mock",
+  "upstreamChange": {
+    "table": "edw.sdi.t_order",
+    "column": "cust_code",
+    "details": [
+      {
+        "scope": "order_id = 1",
+        "oldValue": "CH001",
+        "newValue": "CH002"
+      }
+    ]
+  },
+  "chains": {
+    "A->B->W": {
+      "B": "dws.t_order_base",
+      "W": "dws.t_order_wide"
+    },
+    "A->C->D->W": {
+      "C": "dws.t_order_std",
+      "D": "dws.t_order_enrich",
+      "W": "dws.t_order_wide"
+    }
+  },
+  "targets": {
+    "dws.t_order_base.cust_code": {
+      "scenario": "B（A→B，hop1，单 patch）",
+      "branch": "B",
+      "role": "passthrough",
+      "hop": 1,
+      "patch": {
+        "ref": "sdi.t_order",
+        "alias": "o",
+        "changesFrom": "source"
+      },
+      "probeOld": 1,
+      "probeNew": 1,
+      "probedRows": 1,
+      "impactedRows": 1,
+      "records": [
+        {
+          "impactType": "UPDATED",
+          "rowCount": 1,
+          "scopeText": "order_id = 1",
+          "oldValue": "CH001",
+          "newValue": "CH002",
+          "sampleKeys": [
+            {
+              "order_id": 1
+            }
+          ]
+        }
+      ],
+      "notes": "passthrough + N=1 -> B 分支；A 的补丁直接作用于 sdi.t_order，B 只有 1 行值变化。"
+    },
+    "dws.t_order_std.cust_code": {
+      "scenario": "C（A→C，hop1，单 patch）",
+      "branch": "B",
+      "role": "passthrough",
+      "hop": 1,
+      "patch": {
+        "ref": "sdi.t_order",
+        "alias": "o",
+        "changesFrom": "source"
+      },
+      "probeOld": 1,
+      "probeNew": 1,
+      "probedRows": 1,
+      "impactedRows": 1,
+      "records": [
+        {
+          "impactType": "UPDATED",
+          "rowCount": 1,
+          "scopeText": "order_id = 1",
+          "oldValue": "CH001",
+          "newValue": "CH002",
+          "sampleKeys": [
+            {
+              "order_id": 1
+            }
+          ]
+        }
+      ],
+      "notes": "passthrough + N=1 -> B 分支；C 的 1 行变化将作为 D 的 changesFrom 输入。"
+    },
+    "dws.t_order_enrich.cust_code": {
+      "scenario": "D（A→C→D，hop2，单 patch + changesFrom）",
+      "branch": "C",
+      "role": "logic",
+      "hop": 2,
+      "patch": {
+        "ref": "dws.t_order_std",
+        "alias": "c",
+        "changesFrom": "dws.t_order_std.cust_code"
+      },
+      "probeOld": 1,
+      "probeNew": 1,
+      "probedRows": 1,
+      "impactedRows": 1,
+      "records": [
+        {
+          "impactType": "UPDATED",
+          "rowCount": 1,
+          "scopeText": "order_id = 1",
+          "oldValue": "CH001",
+          "newValue": "CH002",
+          "sampleKeys": [
+            {
+              "order_id": 1
+            }
+          ]
+        }
+      ],
+      "notes": "cust_code 参与 LEFT JOIN 条件 -> role=logic -> C 分支；hop=1+max(C.hop=1)=2；D 的 1 行变化将作为 W 的 changesFrom 输入。"
+    },
+    "dws.t_order_wide.cust_code": {
+      "scenario": "W（菱形收敛：A→B→W + A→C→D→W，hop3，双 patches）",
+      "branch": "C",
+      "role": "logic",
+      "hop": 3,
+      "patches": [
+        {
+          "ref": "dws.t_order_base",
+          "alias": "b",
+          "changesFrom": "dws.t_order_base.cust_code"
+        },
+        {
+          "ref": "dws.t_order_enrich",
+          "alias": "e",
+          "changesFrom": "dws.t_order_enrich.cust_code"
+        }
+      ],
+      "probeOld": 1,
+      "probeNew": 1,
+      "probedRows": 1,
+      "impactedRows": 1,
+      "records": [
+        {
+          "impactType": "UPDATED",
+          "rowCount": 1,
+          "scopeText": "order_id = 1",
+          "oldValue": "CH001|CH001",
+          "newValue": "CH002|CH002",
+          "sampleKeys": [
+            {
+              "order_id": 1
+            }
+          ]
+        }
+      ],
+      "notes": "两个补丁一次性注入同一条 definingSql，只做一次 probe + diff -> 只有 1 行 UPDATED（不是 2 行）。hop=1+max(B.hop=1, D.hop=2)=3。W 的 cust_code 由 b.cust_code 与 e.cust_code 拼接，两侧都必须打补丁。"
+    }
+  },
+  "totals": {
+    "impactedTargets": 4,
+    "impactedRows": 4,
+    "updated": 4,
+    "inserted": 0,
+    "deleted": 0
+  },
+  "noDoubleCounting": "W 只报 1 行 UPDATED（old='CH001|CH001' -> new='CH002|CH002'），不是每条链路各 1 行（2 行）。两条链路在 plan 中收敛为「同一个 target + patches[2]」，引擎把两个补丁一次性注入同一条 definingSql 后只做一次探针与一次 diff。",
+  "diamondNote": "同一 (表,列) 只允许一个 target：W 的 A→B→W 与 A→C→D→W 两条链路必须收敛为 dws.t_order_wide.cust_code 这一个 target 的两个 patches（changesFrom 分别指向 dws.t_order_base.cust_code 与 dws.t_order_enrich.cust_code）。若拆成两个 target（各自表达一条链路），W 会被计算两次：1 行变化会变成 2 行 UPDATED、totals 重复计数，且两个 target 对同一行可能给出冲突的 old/new；validate-plan 应以 DUPLICATE_TARGET（同表同列多 target）报错拦截。",
+  "antiExample": {
+    "description": "反例：W 的 cust_code 同时依赖 B 与 D，只打一个补丁会得到错误值（verify_note.md §3 有实际执行记录）。",
+    "onlyBasePatch": {
+      "appliedPatches": [
+        "dws.t_order_base"
+      ],
+      "orderId": 1,
+      "actual": "CH002|CH001",
+      "expected": "CH002|CH002",
+      "why": "B 侧已传播为 CH002，但 enrich（D）侧仍是基线 CH001"
+    },
+    "onlyEnrichPatch": {
+      "appliedPatches": [
+        "dws.t_order_enrich"
+      ],
+      "orderId": 1,
+      "actual": "CH001|CH002",
+      "expected": "CH002|CH002",
+      "why": "enrich 侧已传播为 CH002，但 B 侧仍是基线 CH001"
+    },
+    "bothPatches": {
+      "appliedPatches": [
+        "dws.t_order_base",
+        "dws.t_order_enrich"
+      ],
+      "orderId": 1,
+      "actual": "CH002|CH002",
+      "expected": "CH002|CH002",
+      "why": "正确：两个 injection point 同时 patch，一次 diff 得到 1 行 UPDATED"
+    }
+  },
+  "consistencyAssertion": "routed 与 full（--verify-full）两种模式对 W 必须一致：都只有 1 行 UPDATED，old='CH001|CH001'、new='CH002|CH002'。若 routed 因多补丁把 W 算成 2 行、或 old/new 出现 'CH002|CH001' / 'CH001|CH002'，即为多路径未收敛/补丁未全部注入的缺陷。",
+  "engineCrossCheck": {
+    "note": "fixtures 制作时用真实引擎（临时编译 src/core + src/io，绕过当时尚在开发的 cli verify 命令）实测，与 python sqlite3 结论一致。",
+    "seedMock": {
+      "tables": 6,
+      "rows": 52,
+      "schemas": ["sdi", "dim", "dws"]
+    },
+    "validatePlan": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "routed": {
+      "totals": {
+        "impactedTargets": 4,
+        "impactedRows": 4,
+        "updated": 4,
+        "inserted": 0,
+        "deleted": 0
+      },
+      "branches": {
+        "dws.t_order_base.cust_code": "B",
+        "dws.t_order_std.cust_code": "B",
+        "dws.t_order_enrich.cust_code": "C",
+        "dws.t_order_wide.cust_code": "C"
+      },
+      "W": {
+        "impactedRows": 1,
+        "oldValue": "CH001|CH001",
+        "newValue": "CH002|CH002"
+      }
+    },
+    "full": {
+      "totals": {
+        "impactedTargets": 4,
+        "impactedRows": 4,
+        "updated": 4,
+        "inserted": 0,
+        "deleted": 0
+      },
+      "W": {
+        "impactedRows": 1,
+        "oldValue": "CH001|CH001",
+        "newValue": "CH002|CH002"
+      }
+    },
+    "duplicateTargetGuard": "把 W 按两条链路拆成两个 target（同表同列）后，validatePlan 返回 DUPLICATE_TARGET error，提示「多条链路必须收敛到同一 target 的多个 patch（§9.1）」；patch 与 patches 同时出现返回 PATCH_CONFLICT。"
+  },
+  "verifyNote": "独立验证过程与反例实际值见 examples/diamond/verify_note.md（python sqlite3：基线快照 vs 双补丁快照，逐 target diff）。"
+}

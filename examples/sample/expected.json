@@ -1,0 +1,380 @@
+{
+  "description": "「DWS 上游关联影响分析」样例期望结果（供 Lead / 集成测试断言）。场景见 docs/sample-scenario.md：edw.sdi.sdi_order_base_t.custorm_code 值变化，order_id=1224 CH001->CH002、order_id=3001 US011->US001。",
+  "sourceOfTruth": "以引擎实测 out/result.json（verifyMode=routed，8 target，totals.impactedTargets=7）核对；本文档的 branch / probe 值 / records 形状 / totals 均与之一致。",
+  "engineMode": "routed",
+  "dbMode": "mock",
+  "cMaxRows": 1000,
+  "sampleKeyLimit": 20,
+  "seedSummary": {
+    "sdi.sdi_order_base_t": {
+      "total": 1589,
+      "byCustormCode": {
+        "CH001": 600,
+        "CH002": 600,
+        "US011": 289,
+        "XX999": 100
+      },
+      "byStatus": {
+        "ACTIVE": 1489,
+        "CLOSED": 100
+      },
+      "notes": [
+        "CH001 = order_id 1..599 + 1224（600 行）；CH002 = 600..1199（600 行）",
+        "US011 = 1201..1223 + 1226..1290 + 3000..3200（289 行）；1201..1290 中的 1224/1225 按排除号段处理，保证 order_id 唯一",
+        "XX999 = 2001..2100（100 行），status=CLOSED",
+        "order_id=1224 的 order_amt=99999（全表最大），其余 order_amt=(order_id*37)%1000+10，无随机",
+        "order_month 在 2026-01 / 2026-02 之间按行序交替",
+        "region_code：CH* -> CN，US* -> US，其它 -> CN"
+      ]
+    },
+    "dim.dim_customer_t": {
+      "total": 5,
+      "rows": "CH001(CN,A)、CH002(CN,B)、US011(US,C)、US001(US,C)、XX999(CN,D)"
+    },
+    "materialized": {
+      "dwd.dwd_order_detail_t": 1589,
+      "dws.dws_order_channel_t": 1489,
+      "dws.dws_order_summary_t": 4,
+      "dws.dws_order_flag_t": 1589,
+      "dws.dws_ch001_order_t": 600,
+      "dws.dws_order_rank_t": 1589,
+      "dws.dws_order_closed_t": 100,
+      "dws.dws_order_channel_v": 1489
+    }
+  },
+  "recordSemantics": {
+    "records": "每个 target 的 records 数组长度 = 按 (impactType, oldValue, newValue) 聚合后的 ImpactRecord 组数；record.rowCount = 该组覆盖的目标行数；record.sampleKeys 只给 ≤ sampleKeyLimit(20) 个样例主键。",
+    "impactedRows": "target.impactedRows = Σ records[].rowCount（本样例 T5 为 1211、T3 为 2），不是 records.length。",
+    "recordsVsRows": "records 条数 ≠ impactedRows：T5 为 1200 条 / 1211 行（其中 11 条 rowCount=2），T3 为 1 条 / 2 行。断言时应校验 records.length、各行 rowCount 之和与 impactedRows，不要断言 records.length == impactedRows。",
+    "totals": "totals.impactedRows/updated/inserted/deleted = 各 target 结果直接累加：T1 与 T7 是同一条传播链的父子目标（跨层重复计数是预期），T2 同表两个列目标也各计一次，因此 totals.impactedRows(1223) 远大于源变更行数(2)。",
+    "sampleKeyLimit": "sampleKeyLimit=20 仅限制每条 record 的 sampleKeys 数量，不影响 records 条数和 rowCount。"
+  },
+  "targets": {
+    "dws.dws_order_channel_t.custorm_code": {
+      "scenario": "T1",
+      "branch": "B",
+      "role": "passthrough",
+      "probeOld": 2,
+      "probeNew": 2,
+      "probedRows": 2,
+      "impactedRows": 2,
+      "records": [
+        {
+          "impactType": "UPDATED",
+          "rowCount": 1,
+          "scopeText": "order_id = 1224",
+          "oldValue": "CH001",
+          "newValue": "CH002",
+          "sampleKeys": [
+            {
+              "order_id": 1224
+            }
+          ],
+          "sourceScopes": [
+            "order_id = 1224",
+            "order_id = 3001"
+          ]
+        },
+        {
+          "impactType": "UPDATED",
+          "rowCount": 1,
+          "scopeText": "order_id = 3001",
+          "oldValue": "US011",
+          "newValue": "US001",
+          "sampleKeys": [
+            {
+              "order_id": 3001
+            }
+          ],
+          "sourceScopes": [
+            "order_id = 1224",
+            "order_id = 3001"
+          ]
+        }
+      ],
+      "notes": "B 分支静态推导，不做 diff SQL：按上游 2 条变化明细各产出 1 条 record（共 2 条、rowCount 各 1，合计 2 行），而不是 1 条聚合 record。1224/3001 均为 ACTIVE，故都出现在 dws_order_channel_t 中。"
+    },
+    "dws.dws_order_summary_t.custorm_code": {
+      "scenario": "T2",
+      "branch": "C",
+      "role": "logic",
+      "probeOld": 3,
+      "probeNew": 4,
+      "probedRows": 4,
+      "impactedRows": 1,
+      "records": [
+        {
+          "impactType": "INSERTED",
+          "rowCount": 1,
+          "scopeText": "custorm_code = 'US001'",
+          "oldValue": null,
+          "newValue": "US001",
+          "sampleKeys": [
+            {
+              "custorm_code": "US001"
+            }
+          ],
+          "sourceScopes": [
+            "order_id = 1224",
+            "order_id = 3001"
+          ]
+        }
+      ],
+      "notes": "被分析列即 GROUP BY 分组键。affectedKeySql 覆盖全部变更明细涉及的 4 个分组键：baseline 组键 = {CH001,CH002,US011,XX999}，patched 组键 = {CH001,CH002,US011,US001,XX999}。US011 组在补丁后仍存在（289->288 行，只是少了 order_id=3001），故组键不变；只有 US001 组是新增 → 1 行 INSERTED，0 行 UPDATED / 0 行 DELETED。C 分支的键集必须取两侧探针结果并集，否则会漏掉 US001。"
+    },
+    "dws.dws_order_summary_t.order_cnt": {
+      "scenario": "T2（附加目标）",
+      "branch": "C",
+      "role": "logic",
+      "probeOld": 3,
+      "probeNew": 4,
+      "probedRows": 4,
+      "impactedRows": 4,
+      "records": [
+        {
+          "impactType": "UPDATED",
+          "rowCount": 1,
+          "scopeText": "custorm_code = 'US011'",
+          "oldValue": "289",
+          "newValue": "288",
+          "sampleKeys": [
+            {
+              "custorm_code": "US011"
+            }
+          ],
+          "sourceScopes": [
+            "order_id = 1224",
+            "order_id = 3001"
+          ]
+        },
+        {
+          "impactType": "UPDATED",
+          "rowCount": 1,
+          "scopeText": "custorm_code = 'CH001'",
+          "oldValue": "600",
+          "newValue": "599",
+          "sampleKeys": [
+            {
+              "custorm_code": "CH001"
+            }
+          ],
+          "sourceScopes": [
+            "order_id = 1224",
+            "order_id = 3001"
+          ]
+        },
+        {
+          "impactType": "UPDATED",
+          "rowCount": 1,
+          "scopeText": "custorm_code = 'CH002'",
+          "oldValue": "600",
+          "newValue": "601",
+          "sampleKeys": [
+            {
+              "custorm_code": "CH002"
+            }
+          ],
+          "sourceScopes": [
+            "order_id = 1224",
+            "order_id = 3001"
+          ]
+        },
+        {
+          "impactType": "INSERTED",
+          "rowCount": 1,
+          "scopeText": "custorm_code = 'US001'",
+          "oldValue": null,
+          "newValue": "1",
+          "sampleKeys": [
+            {
+              "custorm_code": "US001"
+            }
+          ],
+          "sourceScopes": [
+            "order_id = 1224",
+            "order_id = 3001"
+          ]
+        }
+      ],
+      "notes": "CH001 600->599（1224 迁出），CH002 600->601（1224 迁入），US011 289->288（3001 迁出），US001 新增 1 行。引擎按 (old,new) 分组产出 4 条 record，每条 rowCount=1：3 UPDATED + 1 INSERTED，impactedRows=4。"
+    },
+    "dws.dws_order_flag_t.cust_flag": {
+      "scenario": "T3",
+      "branch": "C",
+      "role": "logic",
+      "probeOld": 2,
+      "probeNew": 2,
+      "probedRows": 2,
+      "impactedRows": 2,
+      "records": [
+        {
+          "impactType": "UPDATED",
+          "rowCount": 2,
+          "scopeText": "order_id IN (1224, 3001)",
+          "oldValue": "LEGACY",
+          "newValue": "STANDARD",
+          "sampleKeys": [
+            {
+              "order_id": 1224
+            },
+            {
+              "order_id": 3001
+            }
+          ],
+          "sourceScopes": [
+            "order_id = 1224",
+            "order_id = 3001"
+          ]
+        }
+      ],
+      "notes": "1224 CH001->CH002、3001 US011->US001，均离开 CASE WHEN 的 ('CH001','US011') 集合，cust_flag LEGACY->STANDARD。两条差异的 (old,new) 相同，被合并为 1 条 record（rowCount=2）——这是 records 条数 ≠ impactedRows 的典型例子。"
+    },
+    "dws.dws_ch001_order_t.custorm_code": {
+      "scenario": "T4",
+      "branch": "C",
+      "role": "logic",
+      "probeOld": 1,
+      "probeNew": 0,
+      "probedRows": 1,
+      "impactedRows": 1,
+      "records": [
+        {
+          "impactType": "DELETED",
+          "rowCount": 1,
+          "scopeText": "order_id = 1224",
+          "oldValue": "CH001",
+          "newValue": null,
+          "sampleKeys": [
+            {
+              "order_id": 1224
+            }
+          ],
+          "sourceScopes": [
+            "order_id = 1224",
+            "order_id = 3001"
+          ]
+        }
+      ],
+      "notes": "「变化说明」= 删除行：1224 由 CH001 改为 CH002 后不再满足 WHERE o.custorm_code = 'CH001'；3001 本来就不在结果集中，故 probeOld=1、probeNew=0。"
+    },
+    "dws.dws_order_rank_t.amt_rank": {
+      "scenario": "T5",
+      "branch": "D",
+      "role": "logic",
+      "probeOld": 1489,
+      "probeNew": 1489,
+      "probedRows": 1489,
+      "impactedRows": 1211,
+      "records": [
+        {
+          "impactType": "UPDATED",
+          "recordCount": 1200,
+          "rowCount": 1211,
+          "rowCountDistribution": {
+            "1": 1189,
+            "2": 11
+          },
+          "scopeText": "order_id = <组内样例行>（D 分支每条 record 的 scopeText 是该组的一个样例行主键，不是 IN 列表）",
+          "oldValue": "amt_rank 旧值（组内名次，离散值）",
+          "newValue": "amt_rank 新值",
+          "mergedOldNewPairs": [
+            { "old": "279", "new": "278" },
+            { "old": "280", "new": "279" },
+            { "old": "281", "new": "280" },
+            { "old": "282", "new": "281" },
+            { "old": "283", "new": "282" },
+            { "old": "284", "new": "283" },
+            { "old": "285", "new": "284" },
+            { "old": "286", "new": "285" },
+            { "old": "287", "new": "286" },
+            { "old": "288", "new": "287" },
+            { "old": "289", "new": "288" }
+          ],
+          "sampleKeysPerRecord": "≤ 20（sampleKeyLimit），不是全量键"
+        }
+      ],
+      "notes": "probeOld=probeNew=1489（affectedKeySql 覆盖 CH001/CH002/US011/US001 四个分组键的全部行数，不是 1200）> cMaxRows=1000 -> Branch D（DB 侧按 (change_type, old_val, new_val) 聚合压缩）。受影响 1211 行 = CH001 其余 599 行名次 -1（1224 的 99999 迁出）+ CH002 其余 600 行名次 +1（1224 迁入）+ US011 12 行（order_id=3001 迁入 US001 组后 rank 变为 1；另 11 行因 3001 移出名次 -1）。order_id=1224 rank 1->1 不变；XX999 分组不受影响。compression: 1211 行 -> 1200 条 record（1189 条 rowCount=1 + 11 条 rowCount=2；后 11 条是 CH001 的 r->r-1 与 US011 11 行落在同一 (old,new) 组被合并）。"
+    },
+    "dws.dws_order_closed_t.custorm_code": {
+      "scenario": "T6",
+      "branch": "A",
+      "role": "logic",
+      "probeOld": 0,
+      "probeNew": 0,
+      "probedRows": 0,
+      "impactedRows": 0,
+      "records": [],
+      "notes": "1224/3001 均为 ACTIVE，CLOSED 结果集不含它们；对称探针 probeOld=probeNew=0 -> Branch A（零差异 SQL）。"
+    },
+    "dws.dws_order_channel_v.custorm_code": {
+      "scenario": "T7",
+      "branch": "B",
+      "role": "passthrough",
+      "hop": 2,
+      "dependsOn": "dws.dws_order_channel_t.custorm_code",
+      "probeOld": 2,
+      "probeNew": 2,
+      "probedRows": 2,
+      "impactedRows": 2,
+      "records": [
+        {
+          "impactType": "UPDATED",
+          "rowCount": 1,
+          "scopeText": "order_id = 1224",
+          "oldValue": "CH001",
+          "newValue": "CH002",
+          "sampleKeys": [
+            {
+              "order_id": 1224
+            }
+          ],
+          "sourceScopes": [
+            "order_id = 1224",
+            "order_id = 3001"
+          ]
+        },
+        {
+          "impactType": "UPDATED",
+          "rowCount": 1,
+          "scopeText": "order_id = 3001",
+          "oldValue": "US011",
+          "newValue": "US001",
+          "sampleKeys": [
+            {
+              "order_id": 3001
+            }
+          ],
+          "sourceScopes": [
+            "order_id = 1224",
+            "order_id = 3001"
+          ]
+        }
+      ],
+      "notes": "视图 2 跳透传：T1 的 2 行 UPDATED 传播到 dws_order_channel_v，同样按 2 条 record（各 rowCount=1）输出；patch.ref=dws.dws_order_channel_t，变更集来自 T1，非再次读取源表。"
+    }
+  },
+  "totals": {
+    "impactedTargets": 7,
+    "impactedRows": 1223,
+    "updated": 1220,
+    "inserted": 2,
+    "deleted": 1
+  },
+  "totalsSemantics": {
+    "impactedTargets": "8 个 target 中 7 个 impactedRows>0；T6 为 0（A 分支）。",
+    "impactedRows": "各 target impactedRows 累加：2(T1) + 1(T2.custorm_code) + 4(T2.order_cnt) + 2(T3) + 1(T4) + 1211(T5) + 0(T6) + 2(T7) = 1223。",
+    "updated": "2 + 0 + 3 + 2 + 0 + 1211 + 0 + 2 = 1220。",
+    "inserted": "T2.custorm_code US001 1 + T2.order_cnt US001 1 = 2。",
+    "deleted": "T4 order_id=1224 1（T2 键列无 DELETED：US011 组 289->288 仍存在）。",
+    "crossLayerDoubleCounting": "totals 是对 target 结果的直接汇总：T1 与 T7（视图）同一条传播链各计一次、T2 同表两列各计一次，跨层/同表多列重复计数是预期口径，不代表影响了 1223 个不同的物理行。"
+  },
+  "calculationBasis": {
+    "T5breakdown": "CH001 599 + CH002 600 + US011 12 = 1211（US011 明细：order_id=3001 迁入 US001 后 rank 变 1；其余 11 行 amt<47，因 3001 移出名次 -1）",
+    "T5records": "1211 行按 (old_val,new_val) 聚合为 1200 条 record：1189 条 rowCount=1 + 11 条 rowCount=2（(279,278)…(289,288) 共 11 个 pair，来自 CH001 与 US011 同 old/new 的合并）。",
+    "recordsVsImpactedRows": "T5: 1200 条 record / 1211 行；T3: 1 条 / 2 行；其余 target 本例中 records.length == impactedRows。"
+  },
+  "consistencyAssertion": "routed 与 full（--verify-full）两种模式对这套样例必须给出一致结果：affectedKeySql 已覆盖同一 ChangeItem 的全部变化明细（1224、3001 两个数据范围），routed 的并集键集 = 全量受影响键集，因此 T1~T7 的 branch 之外，records/impactedRows/totals 的口径结果（updated/inserted/deleted、各 target impactedRows 与 records 行数之和）均应与本文件一致；branch 与 record 聚合形状可以随分支不同而不同（例如 D 分支按 (old,new) 压缩、full 双跑按主键 diff），但行的汇总数必须相同。",
+  "consistencyVerified": "已用 out/result.json（routed）与 out/result-full.json（full）实测比对：totals 均为 impactedTargets=7 / impactedRows=1223 / updated=1220 / inserted=2 / deleted=1，8 个 target 的 impactedRows 与各 impactType 行数完全一致；branch 分别由 B/C/D/A 变为 C（full 模式统一走全量双跑），符合预期。",
+  "fullModeNote": "以上按 routed 模式断言；由于 affectedKeySql 覆盖完整、且 XX999 分组与 1224/3001 无关，full 模式（全量双跑）应得到同样的 1220/2/1、impactedRows 1223 汇总。若两者汇总不一致，应视为 affectedKeySql 覆盖不全或 diff 口径缺陷。",
+  "knownLimitation": "D 分支按 (impactType, old_value, new_value) 聚合压缩，压缩率取决于被分析列的取值离散度：对 rank / 金额这类高基数（高离散度）列，几乎每行都有独立的 (old,new)，压缩率接近 1（本样例 1211 行 → 1200 条 record，仅 11 行被合并），因此 D 分支主要收益是避免把全量行拉回应用层，而不是减少 record 条数；对 cust_flag 这类低基数列则压缩显著（2 行 → 1 条 record）。这是已知限制，不应把 record 条数当作压缩效果指标。"
+}

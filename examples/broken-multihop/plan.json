@@ -1,0 +1,124 @@
+{
+  "planVersion": 1,
+  "generatedBy": "agent",
+  "plans": [
+    {
+      "planVersion": 1,
+      "source": {
+        "table": {
+          "database": "edw",
+          "schema": "sdi",
+          "table": "t_order"
+        },
+        "column": "cust_code"
+      },
+      "targets": [
+        {
+          "id": "dws.t_order_base.cust_code",
+          "table": {
+            "database": "edw",
+            "schema": "dws",
+            "table": "t_order_base"
+          },
+          "column": "cust_code",
+          "keys": [
+            "order_id"
+          ],
+          "role": "passthrough",
+          "roleEvidence": [
+            "cust_code 仅出现在 SELECT 列表；WHERE 只过滤 status，1:1 透传"
+          ],
+          "definingSql": "SELECT o.order_id, o.cust_code, o.amt\nFROM sdi.t_order o\nWHERE o.status = 'ACTIVE'",
+          "patch": {
+            "ref": "sdi.t_order",
+            "alias": "o"
+          },
+          "affectedKeySql": "SELECT DISTINCT t.order_id FROM ({{DEFINING_SQL}}) t WHERE t.order_id IN (1, 5)",
+          "hop": 1,
+          "notes": "A→B 单跳；两条明细各 1 行变化，期望 2 行 UPDATED"
+        },
+        {
+          "id": "dws.t_order_std.cust_code",
+          "table": {
+            "database": "edw",
+            "schema": "dws",
+            "table": "t_order_std"
+          },
+          "column": "cust_code",
+          "keys": [
+            "order_id"
+          ],
+          "role": "passthrough",
+          "roleEvidence": [
+            "cust_code 仅出现在 SELECT 列表，无过滤/关联/聚合（1:1 透传）"
+          ],
+          "definingSql": "SELECT o.order_id, o.cust_code, o.amt\nFROM sdi.t_order o",
+          "patch": {
+            "ref": "sdi.t_order",
+            "alias": "o"
+          },
+          "affectedKeySql": "SELECT DISTINCT t.order_id FROM ({{DEFINING_SQL}}) t WHERE t.order_id IN (1, 5)",
+          "hop": 1,
+          "notes": "A→C 单跳；期望 2 行 UPDATED"
+        },
+        {
+          "id": "dws.t_order_enrich.cust_code",
+          "table": {
+            "database": "edw",
+            "schema": "dws",
+            "table": "t_order_enrich"
+          },
+          "column": "cust_code",
+          "keys": [
+            "order_id"
+          ],
+          "role": "logic",
+          "roleEvidence": [
+            "cust_code 出现在 LEFT JOIN 条件（m.cust_code = c.cust_code）中，按 logic 处理"
+          ],
+          "definingSql": "SELECT c.order_id, c.cust_code, m.cust_name\nFROM dws.t_order_std c\nLEFT JOIN dim.dim_cust m ON m.cust_code = c.cust_code",
+          "patch": {
+            "ref": "dws.t_order_std",
+            "alias": "c",
+            "changesFrom": "dws.t_order_std.cust_code"
+          },
+          "affectedKeySql": "SELECT DISTINCT t.order_id FROM ({{DEFINING_SQL}}) t WHERE t.order_id IN (1, 5)",
+          "hop": 2,
+          "notes": "hop = 1 + C.hop(1) = 2；期望 2 行 UPDATED"
+        },
+        {
+          "id": "dws.t_order_wide.cust_code",
+          "table": {
+            "database": "edw",
+            "schema": "dws",
+            "table": "t_order_wide"
+          },
+          "column": "cust_code",
+          "keys": [
+            "order_id"
+          ],
+          "role": "logic",
+          "roleEvidence": [
+            "cust_code = b.cust_code || '|' || e.cust_code，是拼接表达式，按 logic 处理"
+          ],
+          "definingSql": "SELECT b.order_id, b.cust_code || '|' || e.cust_code AS cust_code\nFROM dws.t_order_base b\nJOIN dws.t_order_enrich e ON e.order_id = b.order_id",
+          "patches": [
+            {
+              "ref": "dws.t_order_base",
+              "alias": "b",
+              "changesFrom": "dws.t_order_base.cust_code"
+            },
+            {
+              "ref": "dws.t_order_enrich",
+              "alias": "e",
+              "changesFrom": "dws.t_order_enrich.cust_code"
+            }
+          ],
+          "affectedKeySql": "SELECT DISTINCT t.order_id FROM ({{DEFINING_SQL}}) t WHERE t.order_id IN (1, 5)",
+          "hop": 3,
+          "notes": "hop = 1 + max(B.hop=1, D.hop=2) = 3；两补丁一次性注入，期望 2 行 UPDATED"
+        }
+      ]
+    }
+  ]
+}

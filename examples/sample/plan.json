@@ -1,0 +1,215 @@
+{
+  "planVersion": 1,
+  "generatedBy": "agent",
+  "plans": [
+    {
+      "planVersion": 1,
+      "source": {
+        "table": {
+          "database": "edw",
+          "schema": "sdi",
+          "table": "sdi_order_base_t"
+        },
+        "column": "custorm_code"
+      },
+      "targets": [
+        {
+          "id": "dws.dws_order_channel_t.custorm_code",
+          "table": {
+            "database": "edw",
+            "schema": "dws",
+            "table": "dws_order_channel_t"
+          },
+          "column": "custorm_code",
+          "keys": [
+            "order_id"
+          ],
+          "role": "passthrough",
+          "roleEvidence": [
+            "custorm_code 仅出现在 SELECT 列表，未参与 WHERE/JOIN/GROUP BY/CASE/窗口函数",
+            "目标行与 dwd 行 1:1（WHERE 只按 status 过滤，custorm_code 原样透传）"
+          ],
+          "definingSql": "SELECT o.order_id, o.custorm_code, o.order_amt, o.order_month\nFROM dwd.dwd_order_detail_t o\nWHERE o.status = 'ACTIVE'",
+          "patch": {
+            "ref": "dwd.dwd_order_detail_t",
+            "alias": "o"
+          },
+          "affectedKeySql": "SELECT DISTINCT t.order_id FROM ({{DEFINING_SQL}}) t WHERE t.order_id IN (1224, 3001)",
+          "hop": 1,
+          "notes": "sample-scenario.md §3 T1；期望 2 行 UPDATED：order_id=1224 CH001->CH002、order_id=3001 US011->US001"
+        },
+        {
+          "id": "dws.dws_order_summary_t.custorm_code",
+          "table": {
+            "database": "edw",
+            "schema": "dws",
+            "table": "dws_order_summary_t"
+          },
+          "column": "custorm_code",
+          "keys": [
+            "custorm_code"
+          ],
+          "role": "logic",
+          "roleEvidence": [
+            "custorm_code 是 GROUP BY 分组键，存在去重语义（目标行 ≠ 源行）",
+            "被分析列即主键列：组内成员变化表现为 order_cnt/total_amt 变化，组键集合本身不变"
+          ],
+          "definingSql": "SELECT o.custorm_code,\n       COUNT(*)            AS order_cnt,\n       SUM(o.order_amt)    AS total_amt\nFROM dwd.dwd_order_detail_t o\nGROUP BY o.custorm_code",
+          "patch": {
+            "ref": "dwd.dwd_order_detail_t",
+            "alias": "o"
+          },
+          "affectedKeySql": "SELECT DISTINCT t.custorm_code FROM ({{DEFINING_SQL}}) t WHERE t.custorm_code IN ('CH001','CH002','US011','US001')",
+          "hop": 1,
+          "notes": "sample-scenario.md §3 T2；affectedKeySql 覆盖 CH001/CH002/US011/US001 四个分组键；期望 1 行 INSERTED（US001 组新增）。US011 组仍存在（289->288 行），键列本身 0 行 UPDATED，CH001/CH002/XX999 不变"
+        },
+        {
+          "id": "dws.dws_order_summary_t.order_cnt",
+          "table": {
+            "database": "edw",
+            "schema": "dws",
+            "table": "dws_order_summary_t"
+          },
+          "column": "order_cnt",
+          "keys": [
+            "custorm_code"
+          ],
+          "role": "logic",
+          "roleEvidence": [
+            "COUNT(*) 聚合指标，源行在分组键之间迁移会改变分组成员数"
+          ],
+          "definingSql": "SELECT o.custorm_code,\n       COUNT(*)            AS order_cnt,\n       SUM(o.order_amt)    AS total_amt\nFROM dwd.dwd_order_detail_t o\nGROUP BY o.custorm_code",
+          "patch": {
+            "ref": "dwd.dwd_order_detail_t",
+            "alias": "o"
+          },
+          "affectedKeySql": "SELECT DISTINCT t.custorm_code FROM ({{DEFINING_SQL}}) t WHERE t.custorm_code IN ('CH001','CH002','US011','US001')",
+          "hop": 1,
+          "notes": "sample-scenario.md §3 T2 附加目标；期望 3 行 UPDATED（CH001 600->599、CH002 600->601、US011 289->288）+ 1 行 INSERTED（US001 1 行），共 4 条记录"
+        },
+        {
+          "id": "dws.dws_order_flag_t.cust_flag",
+          "table": {
+            "database": "edw",
+            "schema": "dws",
+            "table": "dws_order_flag_t"
+          },
+          "column": "cust_flag",
+          "keys": [
+            "order_id"
+          ],
+          "role": "logic",
+          "roleEvidence": [
+            "custorm_code 出现在 CASE WHEN 条件中（CASE WHEN o.custorm_code IN ('CH001','US011')）"
+          ],
+          "definingSql": "SELECT o.order_id,\n       o.order_amt,\n       CASE WHEN o.custorm_code IN ('CH001','US011') THEN 'LEGACY' ELSE 'STANDARD' END AS cust_flag\nFROM dwd.dwd_order_detail_t o",
+          "patch": {
+            "ref": "dwd.dwd_order_detail_t",
+            "alias": "o"
+          },
+          "affectedKeySql": "SELECT DISTINCT t.order_id FROM ({{DEFINING_SQL}}) t WHERE t.order_id IN (1224, 3001)",
+          "hop": 1,
+          "notes": "sample-scenario.md §3 T3；期望 2 行 UPDATED（LEGACY->STANDARD）：order_id=1224、3001"
+        },
+        {
+          "id": "dws.dws_ch001_order_t.custorm_code",
+          "table": {
+            "database": "edw",
+            "schema": "dws",
+            "table": "dws_ch001_order_t"
+          },
+          "column": "custorm_code",
+          "keys": [
+            "order_id"
+          ],
+          "role": "logic",
+          "roleEvidence": [
+            "custorm_code 出现在 WHERE 过滤条件中（WHERE o.custorm_code = 'CH001'）",
+            "过滤条件随变更值变化，目标行集合会增减（1224 由 CH001 改为 CH002 后离开结果集）"
+          ],
+          "definingSql": "SELECT o.order_id, o.custorm_code\nFROM dwd.dwd_order_detail_t o\nWHERE o.custorm_code = 'CH001'",
+          "patch": {
+            "ref": "dwd.dwd_order_detail_t",
+            "alias": "o"
+          },
+          "affectedKeySql": "SELECT DISTINCT t.order_id FROM ({{DEFINING_SQL}}) t WHERE t.order_id IN (1224, 3001)",
+          "hop": 1,
+          "notes": "sample-scenario.md §3 T4；期望 1 行 DELETED：order_id=1224、CH001->(空)"
+        },
+        {
+          "id": "dws.dws_order_rank_t.amt_rank",
+          "table": {
+            "database": "edw",
+            "schema": "dws",
+            "table": "dws_order_rank_t"
+          },
+          "column": "amt_rank",
+          "keys": [
+            "order_id"
+          ],
+          "role": "logic",
+          "roleEvidence": [
+            "custorm_code 出现在窗口函数 PARTITION BY 中：行在分区间迁移会改变同组其它行的名次"
+          ],
+          "definingSql": "SELECT o.order_id,\n       o.custorm_code,\n       RANK() OVER (PARTITION BY o.custorm_code ORDER BY o.order_amt DESC) AS amt_rank\nFROM dwd.dwd_order_detail_t o",
+          "patch": {
+            "ref": "dwd.dwd_order_detail_t",
+            "alias": "o"
+          },
+          "affectedKeySql": "SELECT t.order_id FROM ({{DEFINING_SQL}}) t WHERE t.custorm_code IN ('CH001','CH002','US011','US001')",
+          "hop": 1,
+          "notes": "sample-scenario.md §3 T5；期望 1211 行 UPDATED（> cMaxRows 1000，走 D 分支）：CH001 其余 599 行 rank-1、CH002 其余 600 行 rank+1、US011 12 行变化（order_id=3001 迁入 US001 组后 rank 变为 1，另有 11 行因 3001 移出名次 -1）；order_id=1224 自身 rank 不变"
+        },
+        {
+          "id": "dws.dws_order_closed_t.custorm_code",
+          "table": {
+            "database": "edw",
+            "schema": "dws",
+            "table": "dws_order_closed_t"
+          },
+          "column": "custorm_code",
+          "keys": [
+            "order_id"
+          ],
+          "role": "logic",
+          "roleEvidence": [
+            "目标行集由 status='CLOSED' 过滤决定；被分析列虽只在 SELECT 列表，但受影响行集可能随源行进入/离开结果集，按 logic 处理（本例 probe=0，Branch A）"
+          ],
+          "definingSql": "SELECT o.order_id, o.custorm_code\nFROM dwd.dwd_order_detail_t o\nWHERE o.status = 'CLOSED'",
+          "patch": {
+            "ref": "dwd.dwd_order_detail_t",
+            "alias": "o"
+          },
+          "affectedKeySql": "SELECT DISTINCT t.order_id FROM ({{DEFINING_SQL}}) t WHERE t.order_id IN (1224, 3001)",
+          "hop": 1,
+          "notes": "sample-scenario.md §3 T6；1224/3001 均为 ACTIVE，probeOld=probeNew=0 -> Branch A"
+        },
+        {
+          "id": "dws.dws_order_channel_v.custorm_code",
+          "table": {
+            "database": "edw",
+            "schema": "dws",
+            "table": "dws_order_channel_v"
+          },
+          "column": "custorm_code",
+          "keys": [
+            "order_id"
+          ],
+          "role": "passthrough",
+          "roleEvidence": [
+            "视图对上一跳 dws.dws_order_channel_t.custorm_code 的纯透传（SELECT 列表，无过滤/关联/聚合）"
+          ],
+          "definingSql": "SELECT t.order_id, t.custorm_code, t.order_amt FROM dws.dws_order_channel_t t",
+          "patch": {
+            "ref": "dws.dws_order_channel_t",
+            "alias": "t"
+          },
+          "affectedKeySql": "SELECT DISTINCT t.order_id FROM ({{DEFINING_SQL}}) t WHERE t.order_id IN (1224, 3001)",
+          "hop": 2,
+          "dependsOn": "dws.dws_order_channel_t.custorm_code",
+          "notes": "sample-scenario.md §3 T7；变更集来自 T1 传播，期望 2 行 UPDATED（order_id=1224、3001）"
+        }
+      ]
+    }
+  ]
+}

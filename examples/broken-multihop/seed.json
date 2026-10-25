@@ -1,0 +1,129 @@
+{
+  "database": "edw",
+  "schemas": [
+    "sdi",
+    "dim",
+    "dws"
+  ],
+  "tables": [
+    {
+      "schema": "sdi",
+      "table": "t_order",
+      "columns": [
+        {
+          "name": "order_id",
+          "type": "INTEGER",
+          "pk": true
+        },
+        {
+          "name": "cust_code",
+          "type": "TEXT"
+        },
+        {
+          "name": "amt",
+          "type": "REAL"
+        },
+        {
+          "name": "status",
+          "type": "TEXT"
+        }
+      ],
+      "rows": [
+        [
+          1,
+          "CH001",
+          107,
+          "ACTIVE"
+        ],
+        [
+          2,
+          "CH001",
+          114,
+          "ACTIVE"
+        ],
+        [
+          3,
+          "CH002",
+          121,
+          "ACTIVE"
+        ],
+        [
+          4,
+          "CH001",
+          128,
+          "ACTIVE"
+        ],
+        [
+          5,
+          "CH001",
+          135,
+          "ACTIVE"
+        ],
+        [
+          6,
+          "CH001",
+          142,
+          "ACTIVE"
+        ],
+        [
+          7,
+          "CH002",
+          149,
+          "ACTIVE"
+        ],
+        [
+          8,
+          "CH001",
+          156,
+          "ACTIVE"
+        ],
+        [
+          9,
+          "CH002",
+          163,
+          "ACTIVE"
+        ],
+        [
+          10,
+          "CH001",
+          170,
+          "ACTIVE"
+        ]
+      ]
+    },
+    {
+      "schema": "dim",
+      "table": "dim_cust",
+      "columns": [
+        {
+          "name": "cust_code",
+          "type": "TEXT",
+          "pk": true
+        },
+        {
+          "name": "cust_name",
+          "type": "TEXT"
+        },
+        {
+          "name": "region",
+          "type": "TEXT"
+        }
+      ],
+      "rows": [
+        [
+          "CH001",
+          "渠道一",
+          "CN"
+        ],
+        [
+          "CH002",
+          "渠道二",
+          "CN"
+        ]
+      ]
+    }
+  ],
+  "sqlFiles": [
+    "examples/broken-multihop/sql/10_etl_dml.sql"
+  ]
+}

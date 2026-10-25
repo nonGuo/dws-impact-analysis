@@ -1,0 +1,19 @@
+{
+  "name": "dws-impact-analysis-skill",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DWS 上游关联影响分析 skill（opencode / 纯 TypeScript / 零运行期依赖）",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "demo": "node dist/src/cli.js demo"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "planVersion": 1,
+  "generatedBy": "agent",
+  "plans": [
+    {
+      "planVersion": 1,
+      "source": {
+        "table": {
+          "database": "edw",
+          "schema": "sdi",
+          "table": "t_order"
+        },
+        "column": "cust_code"
+      },
+      "targets": [
+        {
+          "id": "dws.t_order_base.cust_code",
+          "table": {
+            "database": "edw",
+            "schema": "dws",
+            "table": "t_order_base"
+          },
+          "column": "cust_code",
+          "keys": [
+            "order_id"
+          ],
+          "role": "passthrough",
+          "roleEvidence": [
+            "cust_code 仅出现在 SELECT 列表；WHERE 只过滤 status，cust_code 原样透传（1:1）",
+            "A→B 单跳：patch.ref = sdi.t_order，changesFrom 缺省（= source）"
+          ],
+          "definingSql": "SELECT o.order_id, o.cust_code, o.amt\nFROM sdi.t_order o\nWHERE o.status = 'ACTIVE'",
+          "patch": {
+            "ref": "sdi.t_order",
+            "alias": "o"
+          },
+          "affectedKeySql": "SELECT DISTINCT t.order_id FROM ({{DEFINING_SQL}}) t WHERE t.order_id IN (1)",
+          "hop": 1,
+          "notes": "单链路 A→B→W 的中间节点；期望 1 行 UPDATED（order_id=1 CH001->CH002）"
+        },
+        {
+          "id": "dws.t_order_std.cust_code",
+          "table": {
+            "database": "edw",
+            "schema": "dws",
+            "table": "t_order_std"
+          },
+          "column": "cust_code",
+          "keys": [
+            "order_id"
+          ],
+          "role": "passthrough",
+          "roleEvidence": [
+            "cust_code 仅出现在 SELECT 列表，无过滤/关联/聚合（1:1 透传）",
+            "A→C 单跳：patch.ref = sdi.t_order，changesFrom 缺省（= source）"
+          ],
+          "definingSql": "SELECT o.order_id, o.cust_code, o.amt\nFROM sdi.t_order o",
+          "patch": {
+            "ref": "sdi.t_order",
+            "alias": "o"
+          },
+          "affectedKeySql": "SELECT DISTINCT t.order_id FROM ({{DEFINING_SQL}}) t WHERE t.order_id IN (1)",
+          "hop": 1,
+          "notes": "单链路 A→C→D→W 的中间节点；期望 1 行 UPDATED（order_id=1 CH001->CH002）"
+        },
+        {
+          "id": "dws.t_order_enrich.cust_code",
+          "table": {
+            "database": "edw",
+            "schema": "dws",
+            "table": "t_order_enrich"
+          },
+          "column": "cust_code",
+          "keys": [
+            "order_id"
+          ],
+          "role": "logic",
+          "roleEvidence": [
+            "cust_code 出现在 LEFT JOIN 条件（m.cust_code = c.cust_code）中，按 logic 处理",
+            "A→C→D 多跳：patch.ref = dws.t_order_std，changesFrom = dws.t_order_std.cust_code"
+          ],
+          "definingSql": "SELECT c.order_id, c.cust_code, m.cust_name\nFROM dws.t_order_std c\nLEFT JOIN dim.dim_cust m ON m.cust_code = c.cust_code",
+          "patch": {
+            "ref": "dws.t_order_std",
+            "alias": "c",
+            "changesFrom": "dws.t_order_std.cust_code"
+          },
+          "affectedKeySql": "SELECT DISTINCT t.order_id FROM ({{DEFINING_SQL}}) t WHERE t.order_id IN (1)",
+          "hop": 2,
+          "notes": "hop = 1 + C.hop(1) = 2；期望 1 行 UPDATED（cust_code CH001->CH002）"
+        },
+        {
+          "id": "dws.t_order_wide.cust_code",
+          "table": {
+            "database": "edw",
+            "schema": "dws",
+            "table": "t_order_wide"
+          },
+          "column": "cust_code",
+          "keys": [
+            "order_id"
+          ],
+          "role": "logic",
+          "roleEvidence": [
+            "cust_code = b.cust_code || '|' || e.cust_code，是拼接表达式，非 1:1 透传，按 logic 处理",
+            "菱形收敛：两条链路的两个注入点一次性注入同一 definingSql，只做一次 diff"
+          ],
+          "definingSql": "SELECT b.order_id, b.cust_code || '|' || e.cust_code AS cust_code\nFROM dws.t_order_base b\nJOIN dws.t_order_enrich e ON e.order_id = b.order_id",
+          "patches": [
+            {
+              "ref": "dws.t_order_base",
+              "alias": "b",
+              "changesFrom": "dws.t_order_base.cust_code"
+            },
+            {
+              "ref": "dws.t_order_enrich",
+              "alias": "e",
+              "changesFrom": "dws.t_order_enrich.cust_code"
+            }
+          ],
+          "affectedKeySql": "SELECT DISTINCT t.order_id FROM ({{DEFINING_SQL}}) t WHERE t.order_id IN (1)",
+          "hop": 3,
+          "notes": "hop = 1 + max(B.hop=1, D.hop=2) = 3；两补丁一次性注入，期望仅 1 行 UPDATED、old='CH001|CH001' -> new='CH002|CH002'（不是 2 行）"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,116 @@
+{
+  "description": "examples/broken-multihop：多跳复核异常演练样例的期望结果。1 个正确 plan + 3 个缺陷 plan，用来验证 verify 能定位「首错层」、给出精确到 plan 字段的修复建议，并能用 --only 只重跑根因层。数字均为实测（Node 24 + 内置 SQLite，2026-10-25）。",
+  "scenario": {
+    "source": "edw.sdi.t_order.cust_code",
+    "details": ["order_id = 1: CH001 → CH002", "order_id = 5: CH001 → CH002"],
+    "chains": {
+      "A->B->W": "sdi.t_order → dws.t_order_base → dws.t_order_wide",
+      "A->C->D->W": "sdi.t_order → dws.t_order_std → dws.t_order_enrich → dws.t_order_wide"
+    },
+    "hops": {
+      "dws.t_order_base.cust_code": 1,
+      "dws.t_order_std.cust_code": 1,
+      "dws.t_order_enrich.cust_code": 2,
+      "dws.t_order_wide.cust_code": 3
+    }
+  },
+  "variants": {
+    "plan.json": {
+      "label": "正确版（对照组）",
+      "validate": { "errors": 0, "warnings": 0 },
+      "verify": {
+        "overall": "PASS",
+        "exitCode": 0,
+        "targets": {
+          "dws.t_order_base.cust_code": { "hop": 1, "status": "PASS" },
+          "dws.t_order_std.cust_code": { "hop": 1, "status": "PASS" },
+          "dws.t_order_enrich.cust_code": { "hop": 2, "status": "PASS" },
+          "dws.t_order_wide.cust_code": { "hop": 3, "status": "PASS" }
+        },
+        "triage": { "verdict": "NO_ACTION", "firstFailingPlanId": null, "firstFailingHop": null }
+      }
+    },
+    "plan-missing-patch.json": {
+      "label": "缺陷 1：汇合目标漏了一个注入点（W 少了 D 的补丁）",
+      "validate": {
+        "errors": 0,
+        "warningCodes": ["PATCH_COVERAGE_MISSING", "HOP_MISMATCH"]
+      },
+      "verify": {
+        "overall": "WARN",
+        "exitCode": 0,
+        "targets": {
+          "dws.t_order_wide.cust_code": { "hop": 3, "status": "WARN" }
+        },
+        "triage": {
+          "verdict": "FIX_PLAN",
+          "firstFailingPlanId": null,
+          "suggestionCodes": ["PATCH_COVERAGE_MISSING"],
+          "suggestionFields": ["patches"]
+        },
+        "note": "这类错误 routed 与 full 用的是同一条「少补丁」的 SQL，所以 full_compare 抓不到；必须靠 PATCH_COVERAGE_MISSING（血缘覆盖度）与人工确认。"
+      }
+    },
+    "plan-wrong-parent.json": {
+      "label": "缺陷 2：D 的 changesFrom 指向了错误的父（父表与 ref 不匹配）",
+      "validate": {
+        "errors": 2,
+        "errorCodes": ["PATCH_CONFLICT", "PARENT_TABLE_MISMATCH"]
+      },
+      "verify": {
+        "overall": "FAIL",
+        "exitCode": 2,
+        "targets": {
+          "dws.t_order_enrich.cust_code": { "hop": 2, "status": "FAIL", "firstFailure": true }
+        },
+        "triage": {
+          "verdict": "FIX_PLAN",
+          "firstFailingPlanId": "dws.t_order_enrich.cust_code",
+          "firstFailingHop": 2,
+          "suggestionCodes": ["PATCH_CONFLICT", "PARENT_TABLE_MISMATCH"],
+          "suggestionFields": ["patches", "patches[].changesFrom"]
+        },
+        "note": "plan 校验有 error 时 routed 分析不可用，只有 plan_integrity 的建议有效；首错层 = hop2 的 D，符合「错误由该层引入」。"
+      }
+    },
+    "plan-narrow-keys.json": {
+      "label": "缺陷 3：W 的 affectedKeySql 只覆盖 order_id = 1，漏了 order_id = 5",
+      "validate": { "errors": 0, "warnings": 0 },
+      "verify": {
+        "overall": "FAIL",
+        "exitCode": 2,
+        "targets": {
+          "dws.t_order_base.cust_code": { "hop": 1, "status": "PASS" },
+          "dws.t_order_std.cust_code": { "hop": 1, "status": "PASS" },
+          "dws.t_order_enrich.cust_code": { "hop": 2, "status": "PASS" },
+          "dws.t_order_wide.cust_code": { "hop": 3, "status": "FAIL", "failCodes": ["full_compare"] }
+        },
+        "triage": {
+          "verdict": "FIX_PLAN",
+          "firstFailingPlanId": "dws.t_order_wide.cust_code",
+          "firstFailingHop": 3,
+          "suggestionCodes": ["full_compare"],
+          "suggestionFields": ["affectedKeySql"]
+        },
+        "note": "上游 hop1/hop2 全 PASS、只有最深的 W 失败 → 首错层就是 W 本身，改它的 affectedKeySql（覆盖两侧键并集），不要动上游。"
+      }
+    }
+  },
+  "onlyClosure": {
+    "description": "--only 只跑目标层及其祖先闭包（避免整链重跑）",
+    "cases": [
+      { "only": "dws.t_order_wide.cust_code", "checkedTargets": 4, "note": "W 依赖 base 与 enrich，enrich 又依赖 std → 闭包 4 个" },
+      { "only": "dws.t_order_enrich.cust_code", "checkedTargets": 2, "note": "D 只依赖 std → 闭包 2 个" }
+    ]
+  },
+  "fixtureVerification": {
+    "source": "python sqlite3 独立验证（tools/gen_broken.py 生成，配 seed.json + sql/*.sql 可复现）",
+    "materializedRows": { "sdi.t_order": 10, "dim.dim_cust": 2, "total": 52 },
+    "groundTruth": {
+      "correct": "W 的 2 行：order_id=1 CH001|CH001→CH002|CH002；order_id=5 同理",
+      "onlyBPatched": "order_id=1 得到 CH002|CH001（错误）",
+      "onlyDPatched": "order_id=1 得到 CH001|CH002（错误）"
+    }
+  },
+  "acceptance": "test/e2e.test.ts 的「多跳异常演练」用例按本文件断言 4 个变体的 overall / firstFailingPlanId / suggestion field / --only 闭包大小。"
+}

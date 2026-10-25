@@ -1,0 +1,8 @@
+node_modules/
+dist/
+out/
+*.log
+
+# 运行 seed-mock 生成的模拟库（可随时重建，不进版本库）
+examples/**/mock*.db
+examples/**/mock.manifest.json
